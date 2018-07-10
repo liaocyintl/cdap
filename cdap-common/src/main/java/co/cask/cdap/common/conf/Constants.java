@@ -350,7 +350,6 @@ public final class Constants {
   public static final class ProgramHeartbeat {
     public static final String TABLE = "program.heartbeat";
     public static final String HEARTBEAT_INTERVAL_SECONDS = "program.heartbeat.interval.seconds";
-    public static final String HEARTBEAT_TABLE_TTL_SECONDS = "program.heartbeat.table.ttl.seconds";
   }
 
   /**
