@@ -16,7 +16,7 @@
 
 package co.cask.cdap.logging.remote;
 
-import java.util.Iterator;
+import ch.qos.logback.classic.spi.ILoggingEvent;
 
 /**
  * Interface defining how to process logs from coming from a remote program execution.
@@ -26,7 +26,7 @@ public interface RemoteExecutionLogProcessor {
   /**
    * Processes the message.
    *
-   * @param loggingEventBytes the event coming from the remote execution
+   * @param loggingEvent the event coming from the remote execution
    */
-  void process(Iterator<byte[]> loggingEventBytes);
+  void process(ILoggingEvent loggingEvent);
 }

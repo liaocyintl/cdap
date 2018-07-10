@@ -25,13 +25,12 @@ import co.cask.cdap.common.conf.CConfiguration;
 import co.cask.cdap.common.conf.Constants;
 import co.cask.cdap.common.guice.ConfigModule;
 import co.cask.cdap.common.guice.DiscoveryRuntimeModule;
-import co.cask.cdap.common.logging.LoggingContext;
 import co.cask.cdap.common.metrics.NoOpMetricsCollectionService;
 import co.cask.cdap.logging.appender.LogAppenderInitializer;
 import co.cask.cdap.logging.appender.LoggingTester;
 import co.cask.cdap.logging.appender.kafka.LogPartitionType;
+import co.cask.cdap.logging.context.FlowletLoggingContext;
 import co.cask.cdap.logging.context.LoggingContextHelper;
-import co.cask.cdap.logging.context.MapReduceLoggingContext;
 import co.cask.cdap.logging.filter.Filter;
 import co.cask.cdap.logging.serialize.LoggingEventSerializer;
 import co.cask.cdap.messaging.MessageFetcher;
@@ -129,9 +128,9 @@ public class TestTMSLogging {
 
     Logger logger = LoggerFactory.getLogger("TestTMSLogging");
     LoggingTester loggingTester = new LoggingTester();
-
-    LoggingContext loggingContext = new MapReduceLoggingContext("TKL_NS_1", "APP_1", "MR_1", "RUN1");
-    loggingTester.generateLogs(logger, loggingContext);
+    FlowletLoggingContext flowletLoggingContext = new FlowletLoggingContext("TKL_NS_1", "APP_1", "FLOW_1", "FLOWLET_1",
+                                                                            "RUN1", "INSTANCE1");
+    loggingTester.generateLogs(logger, flowletLoggingContext);
 
     logAppenderInitializer.close();
 
@@ -163,9 +162,9 @@ public class TestTMSLogging {
     // to our LoggingContext.
     LogPartitionType logPartitionType =
             LogPartitionType.valueOf(cConf.get(Constants.Logging.LOG_PUBLISH_PARTITION_KEY).toUpperCase());
-    String partitionKey = logPartitionType.getPartitionKey(loggingContext);
+    String partitionKey = logPartitionType.getPartitionKey(flowletLoggingContext);
     int partition = TMSLogAppender.partition(partitionKey, cConf.getInt(Constants.Logging.NUM_PARTITIONS));
-    Filter logFilter = LoggingContextHelper.createFilter(loggingContext);
+    Filter logFilter = LoggingContextHelper.createFilter(flowletLoggingContext);
 
     List<ILoggingEvent> filteredLogs =
             partitionedFetchedLogs.get(partition).stream().filter(logFilter::match).collect(Collectors.toList());

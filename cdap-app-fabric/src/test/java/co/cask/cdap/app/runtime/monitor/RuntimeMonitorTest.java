@@ -92,6 +92,7 @@ public class RuntimeMonitorTest {
   private DatasetService datasetService;
   private DatasetFramework datasetFramework;
   private Transactional transactional;
+  private RemoteExecutionLogProcessor noOpLogProcessor;
 
   private KeyStore serverKeyStore;
   private KeyStore clientKeyStore;
@@ -133,6 +134,7 @@ public class RuntimeMonitorTest {
       }
     });
 
+    noOpLogProcessor = monitorMessage -> { };
     messagingService = injector.getInstance(MessagingService.class);
     if (messagingService instanceof Service) {
       ((Service) messagingService).startAndWait();
@@ -193,7 +195,7 @@ public class RuntimeMonitorTest {
 
     RuntimeMonitor runtimeMonitor = new RuntimeMonitor(programRunId, monitorCConf, monitorClient,
                                                        datasetFramework, transactional, messagingContext, scheduler,
-                                                       monitorMessage -> { });
+                                                       noOpLogProcessor);
 
     runtimeMonitor.startAndWait();
     // use different configuration for verification
@@ -206,8 +208,7 @@ public class RuntimeMonitorTest {
     verifyPublishedMessages(cConf, 2, lastProcessed);
 
     runtimeMonitor = new RuntimeMonitor(programRunId, monitorCConf, monitorClient,
-                                        datasetFramework, transactional, messagingContext, scheduler,
-                                        monitorMessage -> { });
+                                        datasetFramework, transactional, messagingContext, scheduler, noOpLogProcessor);
     runtimeMonitor.startAndWait();
     // use different configuration for verification
     lastProcessed = verifyPublishedMessages(monitorCConf, 2, lastProcessed);
@@ -259,7 +260,7 @@ public class RuntimeMonitorTest {
 
     RuntimeMonitor runtimeMonitor = new RuntimeMonitor(programRunId, monitorCConf, monitorClient,
                                                        datasetFramework, transactional, messagingContext, scheduler,
-                                                       monitorMessage -> { });
+                                                       noOpLogProcessor);
     runtimeMonitor.startAndWait();
 
     // Wait and verify messages as being republished by the runtime monitor to the "local" metrics topics
@@ -312,7 +313,7 @@ public class RuntimeMonitorTest {
 
     RuntimeMonitor runtimeMonitor = new RuntimeMonitor(programRunId, monitorCConf, monitorClient,
                                                        datasetFramework, transactional, messagingContext, scheduler,
-                                                       monitorMessage -> { });
+                                                       noOpLogProcessor);
 
     runtimeMonitor.startAndWait();
     verifyPublishedMessages(monitorCConf, 2, null);
