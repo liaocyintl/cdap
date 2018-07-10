@@ -22,16 +22,19 @@ import co.cask.cdap.api.messaging.MessagingContext;
 import co.cask.cdap.api.messaging.TopicNotFoundException;
 import co.cask.cdap.common.conf.CConfiguration;
 import co.cask.cdap.common.conf.Constants;
+import co.cask.cdap.common.logging.ApplicationLoggingContext;
+import co.cask.cdap.common.logging.LoggingContext;
+import co.cask.cdap.common.logging.NamespaceLoggingContext;
 import co.cask.cdap.common.service.RetryStrategies;
 import co.cask.cdap.common.service.RetryStrategy;
 import co.cask.cdap.logging.appender.LogAppender;
 import co.cask.cdap.logging.appender.LogMessage;
 import co.cask.cdap.logging.appender.kafka.LogPartitionType;
+import co.cask.cdap.logging.appender.kafka.StringPartitioner;
 import co.cask.cdap.logging.serialize.LoggingEventSerializer;
 import co.cask.cdap.messaging.MessagingService;
 import co.cask.cdap.messaging.context.MultiThreadMessagingContext;
 import co.cask.cdap.proto.id.NamespaceId;
-import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.hash.Hashing;
 import com.google.common.util.concurrent.AbstractExecutionThreadService;
@@ -52,6 +55,8 @@ import java.util.concurrent.TimeUnit;
  */
 public final class TMSLogAppender extends LogAppender {
 
+  private static final int QUEUE_SIZE = 512;
+
   private static final String APPENDER_NAME = "TMSLogAppender";
 
   private final BlockingQueue<LogMessage> messageQueue;
@@ -60,22 +65,20 @@ public final class TMSLogAppender extends LogAppender {
   @Inject
   TMSLogAppender(CConfiguration cConf, MessagingService messagingService) {
     setName(APPENDER_NAME);
-    int queueSize = cConf.getInt(Constants.Logging.TMS_APPENDER_QUEUE_SIZE);
-    this.messageQueue = new ArrayBlockingQueue<>(queueSize);
-    this.tmsLogPublisher = new TMSLogPublisher(cConf, messageQueue, this, messagingService, queueSize);
+    this.messageQueue = new ArrayBlockingQueue<>(QUEUE_SIZE);
+    this.tmsLogPublisher = new TMSLogPublisher(cConf, messageQueue, this, messagingService);
   }
 
   @Override
   public void start() {
     tmsLogPublisher.startAndWait();
-    addInfo("Successfully started " + APPENDER_NAME);
+    addInfo("Successfully initialized TMSLogAppender.");
     super.start();
   }
 
   @Override
   public void stop() {
     tmsLogPublisher.stopAndWait();
-    addInfo("Successfully stopped " + APPENDER_NAME);
     super.stop();
   }
 
@@ -91,46 +94,39 @@ public final class TMSLogAppender extends LogAppender {
     }
   }
 
-  // Based off of StringPartitioner, but that class can not be used in Standalone, as kafka dependencies do not exist
-  // in Standalone
-  @VisibleForTesting
-  static int partition(Object key, int numPartitions) {
-    return Math.abs(Hashing.md5().hashString(key.toString()).asInt()) % numPartitions;
-  }
-
   /**
    * Publisher service to publish logs to TMS asynchronously.
    */
   private static final class TMSLogPublisher extends AbstractExecutionThreadService {
 
+    private final CConfiguration cConf;
     private final BlockingQueue<LogMessage> messageQueue;
     private final String topicPrefix;
     private final int numPartitions;
-    private final int queueSize;
     private final LoggingEventSerializer loggingEventSerializer;
     private final ContextAware contextAware;
     private final MessagingContext messagingContext;
-    private final LogPartitionType logPartitionType;
     private final RetryStrategy retryStrategy;
+//    private final StringPartitioner stringPartitioner;
     private volatile Thread blockingThread;
 
     private TMSLogPublisher(CConfiguration cConf, BlockingQueue<LogMessage> messageQueue, ContextAware contextAware,
-                            MessagingService messagingService, int queueSize) {
+                            MessagingService messagingService) {
+      this.cConf = cConf;
       this.messageQueue = messageQueue;
+      // TODO: rename variable
       this.topicPrefix = cConf.get(Constants.Logging.TMS_TOPIC_PREFIX);
       this.numPartitions = cConf.getInt(Constants.Logging.NUM_PARTITIONS);
-      this.queueSize = queueSize;
       this.loggingEventSerializer = new LoggingEventSerializer();
       this.contextAware = contextAware;
       this.retryStrategy = RetryStrategies.fromConfiguration(cConf, "system.log.process.");
-      this.logPartitionType =
-              LogPartitionType.valueOf(cConf.get(Constants.Logging.LOG_PUBLISH_PARTITION_KEY).toUpperCase());
       this.messagingContext = new MultiThreadMessagingContext(messagingService);
+//      this.stringPartitioner = new StringPartitioner(cConf);
     }
 
     @Override
     protected void run() {
-      Map<Integer, List<byte[]>> buffer = new HashMap<>(queueSize);
+      Map<Integer, List<byte[]>> buffer = new HashMap<>(QUEUE_SIZE);
 
       int failures = 0;
       long failureStartTime = System.currentTimeMillis();
@@ -156,6 +152,7 @@ public final class TMSLogAppender extends LogAppender {
 
             // Log using the status manager
             contextAware.addError("Failed to publish log message to TMS on topicPrefix " + topicPrefix, e);
+            e.printStackTrace();
           } else {
             blockingThread = Thread.currentThread();
             try {
@@ -206,8 +203,7 @@ public final class TMSLogAppender extends LogAppender {
     }
 
     /**
-     * Publishes {@link LogMessage}s from the message queue by serializing them to a buffer of serialized messages,
-     * and then to TMS.
+     * Publishes messages from the message queue to TMS.
      *
      * @param buffer a buffer for storing {@code byte[]} for publishing to TMS
      * @throws InterruptedException if the thread is interrupted
@@ -234,7 +230,7 @@ public final class TMSLogAppender extends LogAppender {
         }
       }
 
-      while (bufferSize < queueSize) {
+      while (bufferSize < QUEUE_SIZE) {
         // Poll for more messages
         LogMessage message = messageQueue.poll();
         if (message == null) {
@@ -255,13 +251,44 @@ public final class TMSLogAppender extends LogAppender {
     }
 
     private void serializeMessageToBuffer(LogMessage logMessage, Map<Integer, List<byte[]>> buffer) {
-      String partitionKey = logPartitionType.getPartitionKey(logMessage.getLoggingContext());
+      String partitionKey = getPartitionKey(logMessage.getLoggingContext());
+//      int partition = stringPartitioner.partition(partitionKey, numPartitions);
       int partition = partition(partitionKey, numPartitions);
 
       if (!buffer.containsKey(partition)) {
         buffer.put(partition, new ArrayList<>());
       }
       buffer.get(partition).add(loggingEventSerializer.toBytes(logMessage));
+    }
+
+    // Based off of StringPartitioner, but that class can not be used in Standalone, as kafka dependencies do not exist
+    // in Standalone
+    private int partition(Object key, int numPartitions) {
+      return Math.abs(Hashing.md5().hashString(key.toString()).asInt()) % numPartitions;
+    }
+
+    /**
+     * Computes the Kafka partition key based on the given {@link LoggingContext}.
+     */
+    private String getPartitionKey(LoggingContext loggingContext) {
+      String namespaceId = loggingContext.getSystemTagsMap().get(NamespaceLoggingContext.TAG_NAMESPACE_ID).getValue();
+
+      if (NamespaceId.SYSTEM.getNamespace().equals(namespaceId)) {
+        return loggingContext.getLogPartition();
+      }
+
+      switch (LogPartitionType.valueOf(cConf.get(Constants.Logging.LOG_PUBLISH_PARTITION_KEY).toUpperCase())) {
+        case PROGRAM:
+          return loggingContext.getLogPartition();
+        case APPLICATION:
+          return namespaceId + ":" +
+                  loggingContext.getSystemTagsMap().get(ApplicationLoggingContext.TAG_APPLICATION_ID).getValue();
+        default:
+          // this should never happen
+          throw new IllegalArgumentException(
+                  String.format("Invalid log partition type %s. Allowed partition types are program/application",
+                          cConf.get(Constants.Logging.LOG_PUBLISH_PARTITION_KEY)));
+      }
     }
   }
 }
