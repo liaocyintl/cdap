@@ -19,7 +19,6 @@ package co.cask.cdap.logging.guice;
 import co.cask.cdap.common.runtime.RuntimeModule;
 import co.cask.cdap.logging.appender.LogAppender;
 import co.cask.cdap.logging.appender.kafka.KafkaLogAppender;
-import co.cask.cdap.logging.appender.tms.TMSLogAppender;
 import co.cask.cdap.logging.framework.local.LocalLogAppender;
 import com.google.inject.AbstractModule;
 import com.google.inject.Module;
@@ -45,8 +44,7 @@ public class LoggingModules extends RuntimeModule {
     return new AbstractModule() {
       @Override
       protected void configure() {
-//        bind(LogAppender.class).to(LocalLogAppender.class).in(Scopes.SINGLETON);
-        bind(LogAppender.class).to(TMSLogAppender.class).in(Scopes.SINGLETON);
+        bind(LogAppender.class).to(LocalLogAppender.class).in(Scopes.SINGLETON);
       }
     };
   }
