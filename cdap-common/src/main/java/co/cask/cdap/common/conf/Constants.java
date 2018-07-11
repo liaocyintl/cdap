@@ -1438,10 +1438,10 @@ public final class Constants {
     /**
      * Direction for lineage
      */
-    public static final class Direction {
-      public static final String INCOMING = "incoming";
-      public static final String OUTGOING = "outgoing";
-      public static final String BOTH = "both";
+    public enum Direction {
+      INCOMING,
+      OUTGOING,
+      BOTH
     }
   }
 }

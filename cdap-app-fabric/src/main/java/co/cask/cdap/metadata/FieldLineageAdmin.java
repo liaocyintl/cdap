@@ -19,7 +19,6 @@ package co.cask.cdap.metadata;
 import co.cask.cdap.api.lineage.field.EndPoint;
 import co.cask.cdap.api.lineage.field.InputField;
 import co.cask.cdap.api.lineage.field.Operation;
-import co.cask.cdap.api.lineage.field.OperationType;
 import co.cask.cdap.api.lineage.field.ReadOperation;
 import co.cask.cdap.api.lineage.field.TransformOperation;
 import co.cask.cdap.api.lineage.field.WriteOperation;
@@ -41,16 +40,17 @@ import co.cask.cdap.proto.metadata.lineage.FieldOperationOutput;
 import co.cask.cdap.proto.metadata.lineage.ProgramFieldOperationInfo;
 import co.cask.cdap.proto.metadata.lineage.ProgramInfo;
 import co.cask.cdap.proto.metadata.lineage.ProgramRunOperations;
+import com.google.common.annotations.VisibleForTesting;
 import com.google.inject.Inject;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.Stack;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 import javax.annotation.Nullable;
@@ -63,7 +63,8 @@ public class FieldLineageAdmin {
   private final FieldLineageReader fieldLineageReader;
 
   @Inject
-  FieldLineageAdmin(FieldLineageReader fieldLineageReader) {
+  @VisibleForTesting
+  public FieldLineageAdmin(FieldLineageReader fieldLineageReader) {
     this.fieldLineageReader = fieldLineageReader;
   }
 
@@ -99,29 +100,28 @@ public class FieldLineageAdmin {
    * which were computed from the specified EndPointField. When direction is specified as 'both', incoming as well
    * as outgoing summaries are returned.
    *
-   * @param direction the direction can one of the "incoming", "outgoing", or "both"
-   * @param endPointField the EndPointField for which incoming summary to be returned
+   * @param direction the direction in which summary need to be computed
+   * @param endPointField the EndPointField for which summary to be returned
    * @param start start time (inclusive) in milliseconds
    * @param end end time (exclusive) in milliseconds
    * @return the FieldLineageSummary
    */
-  FieldLineageSummary getSummary(String direction, EndPointField endPointField, long start, long end) {
+  FieldLineageSummary getSummary(Constants.FieldLineage.Direction direction, EndPointField endPointField, long start,
+                                 long end) {
     Set<DatasetField> incoming = null;
     Set<DatasetField> outgoing = null;
-    if (direction.equals(Constants.FieldLineage.Direction.INCOMING)
-            || direction.equals(Constants.FieldLineage.Direction.BOTH)) {
+    if (direction == Constants.FieldLineage.Direction.INCOMING || direction == Constants.FieldLineage.Direction.BOTH) {
       Set<EndPointField> incomingSummary = fieldLineageReader.getIncomingSummary(endPointField, start, end);
       incoming = convertSummaryToDatasetField(incomingSummary);
     }
-    if (direction.equals(Constants.FieldLineage.Direction.OUTGOING)
-            || direction.equals(Constants.FieldLineage.Direction.BOTH)) {
+    if (direction == Constants.FieldLineage.Direction.OUTGOING || direction == Constants.FieldLineage.Direction.BOTH) {
       Set<EndPointField> outgoingSummary = fieldLineageReader.getOutgoingSummary(endPointField, start, end);
       outgoing = convertSummaryToDatasetField(outgoingSummary);
     }
     return new FieldLineageSummary(incoming, outgoing);
   }
 
-  Set<DatasetField> convertSummaryToDatasetField(Set<EndPointField> summary) {
+  private Set<DatasetField> convertSummaryToDatasetField(Set<EndPointField> summary) {
     Map<EndPoint, Set<String>> endPointFields = new HashMap<>();
     for (EndPointField endPointField : summary) {
       EndPoint endPoint = endPointField.getEndPoint();
@@ -147,23 +147,22 @@ public class FieldLineageAdmin {
    * operations that performed the computation. When direction is specified as 'both', incoming as well
    * as outgoing operations are returned.
    *
-   * @param direction the direction can one of the "incoming", "outgoing", or "both"
+   * @param direction the direction in which operations need to be computed
    * @param endPointField the EndPointField for which operations to be returned
    * @param start start time (inclusive) in milliseconds
    * @param end end time (exclusive) in milliseconds
    * @return the FieldLineageDetails instance
    */
-  FieldLineageDetails getOperationDetails(String direction, EndPointField endPointField, long start, long end) {
+  FieldLineageDetails getOperationDetails(Constants.FieldLineage.Direction direction, EndPointField endPointField,
+                                          long start, long end) {
     List<ProgramFieldOperationInfo> incoming = null;
     List<ProgramFieldOperationInfo> outgoing = null;
-    if (direction.equals(Constants.FieldLineage.Direction.INCOMING)
-            || direction.equals(Constants.FieldLineage.Direction.BOTH)) {
+    if (direction == Constants.FieldLineage.Direction.INCOMING || direction == Constants.FieldLineage.Direction.BOTH) {
       Set<ProgramRunOperations> incomingOperations = fieldLineageReader.getIncomingOperations(endPointField, start,
                                                                                               end);
       incoming = processOperations(incomingOperations);
     }
-    if (direction.equals(Constants.FieldLineage.Direction.OUTGOING)
-            || direction.equals(Constants.FieldLineage.Direction.BOTH)) {
+    if (direction == Constants.FieldLineage.Direction.OUTGOING || direction == Constants.FieldLineage.Direction.BOTH) {
       Set<ProgramRunOperations> outgoingOperations = fieldLineageReader.getOutgoingOperations(endPointField, start,
                                                                                               end);
       outgoing = processOperations(outgoingOperations);
@@ -183,8 +182,10 @@ public class FieldLineageAdmin {
 
   /**
    * Computes the list of {@link ProgramInfo} from given set of ProgramRunIds.
-   * For each program, there is only one entry in the returned list and it is sorted
-   * by the last executed time in descending order.
+   * For each program, there is only one item in the returned list, representing the
+   * latest run of that program. Returned list is also sorted by the last executed time
+   * in descending order.
+   *
    * @param programRunIds set of program run ids from which program info to be computed
    * @return list of ProgramInfo
    */
@@ -199,8 +200,8 @@ public class FieldLineageAdmin {
     }
 
     Stream<Map.Entry<ProgramId, Long>> sortedByLastExecutedTime
-            = programIdToLastExecutedTime.entrySet().stream()
-                                          .sorted(Collections.reverseOrder(Map.Entry.comparingByValue()));
+            = programIdToLastExecutedTime.entrySet()
+              .stream().sorted(Collections.reverseOrder(Map.Entry.comparingByValue()));
 
     List<ProgramInfo> programInfos = new ArrayList<>();
     sortedByLastExecutedTime.forEachOrdered(programIdLongEntry
@@ -213,74 +214,87 @@ public class FieldLineageAdmin {
    * Computes list of {@link FieldOperationInfo} from the given operations.
    * Returned list contains the operations sorted in topological order i.e. each operation
    * in the list is guaranteed to occur before any other operation which reads its outputs.
+   *
    * @param operations set of operation to convert to FieldOperationInfo instances
    * @return list of FieldOperationInfo sorted topologically
    */
   private List<FieldOperationInfo> computeFieldOperationInfo(Set<Operation> operations) {
-    Set<String> writeOperations = new HashSet<>();
-    Map<String, Operation> operationsMap = new HashMap<>();
-    for (Operation operation : operations) {
-      operationsMap.put(operation.getName(), operation);
-      if (operation.getType().equals(OperationType.WRITE)) {
-        writeOperations.add(operation.getName());
-      }
-    }
 
-    LinkedHashSet<String> orderedOperations = new LinkedHashSet<>();
-    for (String write : writeOperations) {
-      WriteOperation writeOperation = (WriteOperation) operationsMap.get(write);
-      List<InputField> inputs = writeOperation.getInputs();
-      Set<String> visitedOperationNames = new LinkedHashSet<>();
-      visitedOperationNames.add(writeOperation.getName());
-      for (InputField input : inputs) {
-        Operation operation = operationsMap.get(input.getOrigin());
-        if (operation != null) {
-          // since we return subset of operations, it is possible that some of the origins are
-          // not in a subset so we need to do null check
-          computeFieldOperationInfoHelper(operationsMap, operationsMap.get(input.getOrigin()), visitedOperationNames);
-        }
-      }
-      orderedOperations.addAll(visitedOperationNames);
-    }
+    List<Operation> orderedOperations = getTopologicallySortedOperations(operations);
 
     List<FieldOperationInfo> fieldOperationInfos = new ArrayList<>();
-    for (String operationName : orderedOperations) {
-      Operation operation = operationsMap.get(operationName);
-      if (operation != null) {
-        // since we return subset of operations, it is possible that some of the origins are
-        // not in a subset so we need to do null check
-        fieldOperationInfos.add(convertToFieldOperationInfo(operationsMap.get(operationName)));
-      }
+    for (Operation operation : orderedOperations) {
+        fieldOperationInfos.add(convertToFieldOperationInfo(operation));
     }
 
-    Collections.reverse(fieldOperationInfos);
     return fieldOperationInfos;
   }
 
-  private void computeFieldOperationInfoHelper(Map<String, Operation> operationsMap, Operation currentOperation,
-                                               Set<String> visitedOperations) {
-    if (!visitedOperations.add(currentOperation.getName())) {
-      // TODO CDAP-13548: should not happen. this is cycle
+  @VisibleForTesting
+  List<Operation> getTopologicallySortedOperations(Set<Operation> operations) {
+    // Map of operation name to the set of Operations which take the output of the given operation as an input.
+    // This map basically represents the adjacency list for operation.
+    Map<String, Set<Operation>> outgoingOperations = new HashMap<>();
+    for (Operation operation : operations) {
+      List<InputField> inputFields = new ArrayList<>();
+      switch (operation.getType()) {
+        case TRANSFORM:
+          TransformOperation transform = (TransformOperation) operation;
+          inputFields.addAll(transform.getInputs());
+          break;
+        case WRITE:
+          WriteOperation write = (WriteOperation) operation;
+          inputFields.addAll(write.getInputs());
+          outgoingOperations.put(operation.getName(), new HashSet<>());
+          break;
+      }
+
+      for (InputField inputField : inputFields) {
+        // Add current operation to the adjacency list of operation represented by origin
+        Set<Operation> outgoings = outgoingOperations.computeIfAbsent(inputField.getOrigin(), k -> new HashSet<>());
+        outgoings.add(operation);
+      }
     }
 
-    switch (currentOperation.getType()) {
-      case READ:
-        // nothing to do. we reached source
-        return;
-      case WRITE:
-        // nothing to do. we add writes before even entering in the recursion
-        return;
-      case TRANSFORM:
-        TransformOperation transform = (TransformOperation) currentOperation;
-        for (InputField field : transform.getInputs()) {
-          Operation operation = operationsMap.get(field.getOrigin());
-          if (operation != null) {
-            // since we return subset of operations, it is possible that some of the origins are
-            // not in a subset so we need to do null check
-            computeFieldOperationInfoHelper(operationsMap, operation, visitedOperations);
-          }
-        }
+    Stack<Operation> stack = new Stack<>();
+    Set<String> visitedOperations = new HashSet<>();
+    for (Operation currentOperation : operations) {
+      String currentOperationName = currentOperation.getName();
+      if (visitedOperations.contains(currentOperationName)) {
+        continue;
+      }
+      topologicalSortUtil(outgoingOperations, currentOperation, visitedOperations, stack);
     }
+
+    List<Operation> topologicalOrder = new ArrayList<>();
+    while (!stack.empty()) {
+      topologicalOrder.add(stack.pop());
+    }
+    return topologicalOrder;
+  }
+
+  /**
+   * Helper function for performing recursion while finding the topological sorting.
+   */
+  private void topologicalSortUtil(Map<String, Set<Operation>> outgoingOperations, Operation currentOperation,
+                                   Set<String> visitedOperations, Stack<Operation> stack) {
+    String currentOperationName = currentOperation.getName();
+    // Mark the current operation as visited.
+    visitedOperations.add(currentOperationName);
+
+    Set<Operation> outgoings = outgoingOperations.get(currentOperationName);
+    if (outgoings == null) {
+      return;
+    }
+
+    for (Operation outgoing : outgoings) {
+      if (visitedOperations.contains(outgoing.getName())) {
+        continue;
+      }
+      topologicalSortUtil(outgoingOperations, outgoing, visitedOperations, stack);
+    }
+
+    stack.push(currentOperation);
   }
 
   private FieldOperationInfo convertToFieldOperationInfo(Operation operation) {

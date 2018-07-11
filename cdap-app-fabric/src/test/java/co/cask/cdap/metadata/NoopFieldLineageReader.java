@@ -18,6 +18,7 @@ package co.cask.cdap.metadata;
 
 import co.cask.cdap.api.lineage.field.EndPoint;
 import co.cask.cdap.api.lineage.field.InputField;
+import co.cask.cdap.api.lineage.field.Operation;
 import co.cask.cdap.api.lineage.field.ReadOperation;
 import co.cask.cdap.api.lineage.field.TransformOperation;
 import co.cask.cdap.api.lineage.field.WriteOperation;
@@ -38,11 +39,15 @@ import java.util.Set;
  * Mock implementation of the {@link FieldLineageReader} for testing purpose.
  */
 public class NoopFieldLineageReader implements FieldLineageReader {
+
   @Override
   public Set<String> getFields(EndPoint endPoint, long start, long end) {
     return fields();
   }
 
+  /**
+   * @return mock field names
+   */
   public static Set<String> fields() {
     return new HashSet<>(Arrays.asList("name", "address", "address_original", "offset", "body"));
   }
@@ -89,25 +94,32 @@ public class NoopFieldLineageReader implements FieldLineageReader {
 
     ReadOperation read = new ReadOperation("read", "reading file", endPoint1, "offset", "body");
     WriteOperation write = new WriteOperation("write", "writing file", endPoint2, InputField.of("read", "offset"),
-            InputField.of("parse", "name"), InputField.of("parse", "address"), InputField.of("parse", "zip"));
+                                              InputField.of("parse", "name"), InputField.of("parse", "address"),
+                                              InputField.of("parse", "zip"));
 
     ProgramRunId program1Run1 = program1.run(RunIds.generate(1000));
     ProgramRunId program1Run2 = program1.run(RunIds.generate(2000));
     Set<ProgramRunOperations> programRunOperations = new HashSet<>();
     programRunOperations.add(new ProgramRunOperations(new HashSet<>(Arrays.asList(program1Run1, program1Run2)),
-            new HashSet<>(Arrays.asList(read, write))));
+                                                      new HashSet<>(Arrays.asList(read, write))));
 
     TransformOperation normalize = new TransformOperation("normalize", "normalizing offset",
-            Collections.singletonList(InputField.of("read", "offset")), "offset");
+                                                          Collections.singletonList(InputField.of("read", "offset")),
+                                                          "offset");
+
     write = new WriteOperation("write", "writing file", endPoint2, InputField.of("normalize", "offset"),
-            InputField.of("parse", "name"), InputField.of("parse", "address"), InputField.of("parse", "zip"));
+                               InputField.of("parse", "name"), InputField.of("parse", "address"),
+                               InputField.of("parse", "zip"));
 
     ProgramRunId program1Run3 = program1.run(RunIds.generate(3000));
     ProgramRunId program1Run4 = program1.run(RunIds.generate(5000));
     ProgramRunId program2Run1 = program2.run(RunIds.generate(4000));
     ProgramRunId program2Run2 = program2.run(RunIds.generate(6000));
-    programRunOperations.add(new ProgramRunOperations(new HashSet<>(Arrays.asList(program1Run3,
-            program1Run4, program2Run1, program2Run2)), new HashSet<>(Arrays.asList(read, normalize, write))));
+
+    Set<ProgramRunId> programRunIds = new HashSet<>(Arrays.asList(program1Run3, program1Run4, program2Run1,
+                                                                  program2Run2));
+    Set<Operation> operations = new HashSet<>(Arrays.asList(read, normalize, write));
+    programRunOperations.add(new ProgramRunOperations(programRunIds, operations));
     return programRunOperations;
   }
 }

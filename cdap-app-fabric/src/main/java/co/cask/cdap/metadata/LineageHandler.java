@@ -113,16 +113,11 @@ public class LineageHandler extends AbstractHttpHandler {
                                          @PathParam("namespace-id") String namespaceId,
                                          @PathParam("dataset-id") String datasetId,
                                          @PathParam("field-name") String field,
-                                         @QueryParam("direction") String direction,
+                                         @QueryParam("direction") String directionStr,
                                          @QueryParam("start") String startStr,
                                          @QueryParam("end") String endStr) throws BadRequestException {
     TimeRange range = parseRange(startStr, endStr);
-    if (!direction.equals(Constants.FieldLineage.Direction.INCOMING)
-            && !direction.equals(Constants.FieldLineage.Direction.OUTGOING)
-            && !direction.equals(Constants.FieldLineage.Direction.BOTH)) {
-      throw new BadRequestException("Direction must be specified to get the field lineage " +
-              "summary and should be one of the 'incoming', 'outgoing', or 'both'.");
-    }
+    Constants.FieldLineage.Direction direction = parseDirection(directionStr);
     EndPointField endPointField = new EndPointField(EndPoint.of(namespaceId, datasetId), field);
     FieldLineageSummary summary = fieldLineageAdmin.getSummary(direction, endPointField, range.getStart(),
                                                                range.getEnd());
@@ -135,16 +130,11 @@ public class LineageHandler extends AbstractHttpHandler {
                                          @PathParam("namespace-id") String namespaceId,
                                          @PathParam("dataset-id") String datasetId,
                                          @PathParam("field-name") String field,
-                                         @QueryParam("direction") @DefaultValue("both") String direction,
+                                         @QueryParam("direction") @DefaultValue("both") String directionStr,
                                          @QueryParam("start") String startStr,
                                          @QueryParam("end") String endStr) throws BadRequestException {
     TimeRange range = parseRange(startStr, endStr);
-    if (!direction.equals(Constants.FieldLineage.Direction.INCOMING)
-            && !direction.equals(Constants.FieldLineage.Direction.OUTGOING)
-            && !direction.equals(Constants.FieldLineage.Direction.BOTH)) {
-      throw new BadRequestException("Direction must be specified to get the field lineage " +
-              "operations and should be one of the 'incoming', 'outgoing', or 'both'.");
-    }
+    Constants.FieldLineage.Direction direction = parseDirection(directionStr);
     EndPointField endPointField = new EndPointField(EndPoint.of(namespaceId, datasetId), field);
     FieldLineageDetails details = fieldLineageAdmin.getOperationDetails(direction, endPointField, range.getStart(),
                                                                         range.getEnd());
@@ -247,6 +237,15 @@ public class LineageHandler extends AbstractHttpHandler {
 
     public long getEnd() {
       return end;
+    }
+  }
+
+  private Constants.FieldLineage.Direction parseDirection(String directionStr) throws BadRequestException {
+    try {
+      return Constants.FieldLineage.Direction.valueOf(directionStr);
+    } catch (IllegalArgumentException e) {
+      throw new BadRequestException("Direction must be specified to get the field lineage " +
+              "summary and should be one of the 'incoming', 'outgoing', or 'both'.");
     }
   }
 }
