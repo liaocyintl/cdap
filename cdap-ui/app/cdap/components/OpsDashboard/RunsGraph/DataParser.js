@@ -15,7 +15,6 @@
  */
 
 import moment from 'moment';
-import uniqBy from 'lodash/uniqBy';
 import {ONE_DAY_SECONDS} from 'services/helpers';
 
 export function parseDashboardData(rawData, startTime, duration, pipeline, customApp) {
@@ -48,7 +47,6 @@ export function parseDashboardData(rawData, startTime, duration, pipeline, custo
       } else {
         buckets[startTime].schedule++;
       }
-      buckets[startTime].runsList.push(runInfo);
 
       if (runInfo.running && runInfo.start) {
         // aggregate delay
@@ -58,50 +56,38 @@ export function parseDashboardData(rawData, startTime, duration, pipeline, custo
     }
 
     // add status
-    if (endTime && buckets[endTime]) {
+    if (buckets[endTime]) {
       if (runInfo.status === 'COMPLETED') {
         buckets[endTime].successful++;
       } else if (runInfo.status === 'FAILED') {
         buckets[endTime].failed++;
       }
-      buckets[endTime].runsList.push(runInfo);
     }
-
-    // if end time is not present, that means the program is still running
-    let end = runInfo.end * 1000 || Date.now();
-    let start = runInfo.start * 1000;
 
     let startIndex = timeArray.indexOf(startTime);
     // if startTime not found, then the program started before the graph
-    // so set start value to start of first bucket
+    // so set start index to first bucket
     if (startIndex === -1) {
       startIndex = 0;
-      start = parseInt(timeArray[startIndex], 10);
     }
 
     let endIndex = timeArray.indexOf(endTime);
-    // if endTime not found, then the program end after the graph
+    // if endTime not found, then the program ended after the graph
+    // or the program is still running
     if (endIndex === -1) {
-      end = Date.now();
+      endTime = getBucket(Date.now());
+      endIndex = timeArray.indexOf(endTime);
     }
 
     // add running
-    let duration = end - start;
-    duration = moment.duration(duration).asHours();
-    duration = parseInt(duration, 10);
-
-    for (let i = 0; i < duration + 1; i++) {
-      let time = timeArray[startIndex + i];
+    for (let i = startIndex; i <= endIndex; i++) {
+      let time = timeArray[i];
 
       if (buckets[time]) {
         buckets[time].running++;
         buckets[time].runsList.push(runInfo);
       }
     }
-  });
-
-  timeArray.forEach((time) => {
-    buckets[time].runsList = uniqBy(buckets[time].runsList, 'run');
   });
 
   let data = Object.keys(buckets).map((time) => {
